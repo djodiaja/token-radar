@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pre-token Radar</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="dot"></span>Pre-token Radar</div>
+  <div class="meta" id="meta"></div>
+</header>
+<main>
+  <section class="hero">
+    <div>
+      <h1 id="headline">Protocols with no token on record, ranked by what one would be worth</h1>
+      <p class="lede">Implied value = TVL &times; the market-cap/TVL multiple its category&rsquo;s traded tokens carry &times; 7-day momentum &times; runway (days live with no token). Every figure comes from the sealed DefiLlama snapshot. A model, not a promise.</p>
+    </div>
+    <dl class="kpis" id="kpis"></dl>
+  </section>
+  <nav class="tabs" id="tabs">
+    <button data-tab="board" class="on">Pre-token board</button>
+    <button data-tab="peers">Traded peers (the anchors)</button>
+  </nav>
+  <section class="filters" id="filters">
+    <label>Search<input id="q" type="search" placeholder="name, category, chain"></label>
+    <label>Category<select id="cat"></select></label>
+    <label>Chain<select id="chain"></select></label>
+    <label>TVL trend<select id="trend"><option value="">Any</option><option value="up">Growing 7d</option><option value="down">Shrinking 7d</option></select></label>
+    <label class="check"><input id="watch" type="checkbox"> Watchlist only</label>
+    <span class="count" id="count"></span>
+  </section>
+  <div class="layout">
+    <section class="tablewrap"><table id="grid"><thead></thead><tbody></tbody></table></section>
+    <aside class="detail" id="detail"></aside>
+  </div>
+</main>
+<script src="../data.js"></script>
+<script src="model.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
