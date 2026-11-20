@@ -30,9 +30,11 @@
     var total = R.rows.reduce(function (s, r) { return s + r.implied_value_usd; }, 0);
     var covered = R.rows.filter(function (r) { return r.watchlist; }).length;
     $('meta').textContent = 'snapshot ' + R.as_of + ' · ' + R.protocols + ' protocols · floor ' + usd(R.floor_usd);
+    var md = R.model;
     $('kpis').innerHTML = [
       ['Watchlist covered', covered + ' / ' + R.watchlist], ['Pre-token rows', R.rows.length],
-      ['Traded peers used', R.traded], ['Sum of implied value', usd(total)]
+      ['Fitted on (traded)', md.n + ' tokens'], ['Held-out error', '×' + md.loo_median_x.toFixed(2) + ' <small>vs ×' + md.base_median_x.toFixed(2) + ' rule</small>'],
+      ['Within 2× (LOO)', Math.round(md.within2x * 100) + '% <small>vs ' + Math.round(md.base_within2x * 100) + '%</small>'], ['Sum of implied value', usd(total)]
     ].map(function (k) { return '<div><dt>' + k[0] + '</dt><dd>' + k[1] + '</dd></div>'; }).join('');
     var cats = {}, chains = {};
     R.rows.forEach(function (r) { cats[r.category] = (cats[r.category] || 0) + 1; r.chains.forEach(function (c) { chains[c] = (chains[c] || 0) + 1; }); });
@@ -45,7 +47,7 @@
   }
 
   var COLS = {
-    board: [['rank', '#', 'num'], ['name', 'Protocol', ''], ['tvl_usd', 'TVL', 'num'], ['change_7d', '7d', 'num'], ['age_days', 'No token for', 'num'], ['multiple', 'Peer mult.', 'num'], ['implied_value_usd', 'Implied value', 'num']],
+    board: [['rank', '#', 'num'], ['name', 'Protocol', ''], ['tvl_usd', 'TVL', 'num'], ['change_7d', '7d', 'num'], ['age_days', 'No token for', 'num'], ['net_per_1k_usd', 'Net / $1k', 'num'], ['implied_value_usd', 'Implied value (80% range)', 'num']],
     peers: [['name', 'Protocol (token trades)', ''], ['category', 'Category', ''], ['tvl_usd', 'TVL', 'num'], ['mcap_usd', 'Market cap', 'num'], ['ratio', 'Mcap / TVL', 'num']]
   };
 
@@ -80,27 +82,39 @@
       }
       return '<tr data-slug="' + esc(r.slug) + '"' + (r.slug === state.p ? ' class="sel"' : '') + '><td class="num">' + r.rank + '</td>' +
         '<td><span class="name">' + esc(r.name) + '</span>' + (r.watchlist ? '<span class="w">WATCH</span>' : '') + (r.parent ? '<span class="lin" title="' + esc(r.parent) + ' already trades">PARENT TRADES</span>' : '') + '<div class="sub">' + esc(r.category) + ' · ' + esc(r.chains.slice(0, 3).join(', ')) + (r.chains.length > 3 ? ' +' + (r.chains.length - 3) : '') + '</div></td>' +
-        '<td class="num">' + usd(r.tvl_usd) + '</td><td class="num">' + pct(r.change_7d) + '</td><td class="num">' + age(r.age_days) + '</td><td class="num">' + r.multiple.toFixed(2) + 'x</td>' +
-        '<td class="num"><div class="bar"><i style="width:' + Math.max(2, Math.round(70 * r.implied_value_usd / max)) + 'px"></i>' + usd(r.implied_value_usd) + '</div></td></tr>';
+        '<td class="num">' + usd(r.tvl_usd) + '</td><td class="num">' + pct(r.change_7d) + '</td><td class="num">' + age(r.age_days) + '</td>' +
+        '<td class="num ' + (r.net_per_1k_usd > 0 ? 'up' : 'down') + '">' + (r.net_per_1k_usd > 0 ? '+$' : '−$') + Math.abs(r.net_per_1k_usd) + '</td>' +
+        '<td class="num"><div class="bar"><i style="width:' + Math.max(2, Math.round(70 * r.implied_value_usd / max)) + 'px"></i>' + usd(r.implied_value_usd) + '</div><div class="sub">' + usd(r.implied_low_usd) + '–' + usd(r.implied_high_usd) + '</div></td></tr>';
     }).join('') : '<tr><td colspan="7" class="empty">No protocol matches these filters.</td></tr>';
   }
 
   function detail() {
     var el = $('detail');
-    if (state.tab === 'peers') { el.innerHTML = '<h3>Why peers matter</h3><p class="sub">Each pre-token protocol is valued at the median market-cap/TVL multiple of traded tokens in its category, shrunk toward its family when the category has few tokens. ' + R.categories.length + ' categories carry at least one traded peer.</p>'; return; }
+    if (state.tab === 'peers') {
+      var md = R.model;
+      el.innerHTML = '<h3>The fitted model</h3><p class="sub">ln(market cap) of ' + md.n + ' traded protocols (tokens worth over 50× or under 1/50 of their TVL left out as outliers), ridge λ=' + md.lambda + '. Coefficients:</p>' +
+        '<table class="peers">' + md.terms.map(function (t, i) { return '<tr><td>' + esc(t) + '</td><td class="num">' + md.beta[i].toFixed(3) + '</td></tr>'; }).join('') + '</table>' +
+        '<h3>Tested held-out</h3><p class="sub">Each traded protocol predicted with itself left out (leave-one-out): typical miss ×' + md.loo_median_x.toFixed(2) + ', ' + Math.round(md.within2x * 100) + '% within 2×. The v1 rule (category median multiple) scored the same way: ×' + md.base_median_x.toFixed(2) + ', ' + Math.round(md.base_within2x * 100) + '% within 2×. 80% of held-out errors fall within ×' + md.band[0] + ' to ×' + md.band[1] + ', the range shown on every row.</p>' +
+        '<h3>Net / $1k</h3><p class="sub">Assumes ' + Math.round(md.airdrop_share * 100) + '% of a launch at the implied value goes to depositors pro rata to TVL, minus the plan\'s fees on the cheapest chain. An assumption, not a forecast of any airdrop.</p>';
+      return;
+    }
     var r = R.rows.filter(function (x) { return x.slug === state.p; })[0] || rowsFor()[0] || R.rows[0];
-    var check = Math.round(r.tvl_usd * r.multiple * r.momentum * r.runway * r.lineage);
+    var P = r.parts, fam = P.slice(4).reduce(function (s, v) { return s + v; }, 0);
+    var check = Math.round(Math.exp(P.reduce(function (s, v) { return s + v; }, 0)) * r.lineage);
+    var f = function (x) { return '×' + Math.exp(x).toFixed(3); };
     var peers = R.live.filter(function (p) { return p.category === r.category; }).slice(0, 5);
     var where = r.watchlist ? ' · on the watchlist' : r.tvl_usd >= R.floor_usd ? ' · above the floor, added by the radar' : ' · below the floor, early';
     el.innerHTML = '<div class="sub">Rank ' + r.rank + ' of ' + R.rows.length + where + '</div>' +
       '<h2>' + esc(r.name) + '</h2><div class="chips"><span class="chip">' + esc(r.category) + '</span>' + r.chains.slice(0, 6).map(function (c) { return '<span class="chip">' + esc(c) + '</span>'; }).join('') + '<span class="chip">no token on record</span></div>' +
-      '<h3>How the implied value is built</h3><div class="wf">' +
-      '<span>TVL (snapshot)</span><span>' + usd(r.tvl_usd) + '</span>' +
-      '<span>× peer multiple — ' + esc(r.multiple_source) + '</span><span>' + r.multiple.toFixed(3) + 'x</span>' +
-      '<span>× momentum, 7d TVL ' + (r.change_7d === null ? 'n/a' : (r.change_7d >= 0 ? '+' : '') + r.change_7d.toFixed(1) + '%') + '</span><span>' + r.momentum.toFixed(3) + '</span>' +
-      '<span>× runway, ' + age(r.age_days) + ' with no token</span><span>' + r.runway.toFixed(3) + '</span>' +
-      (r.parent ? '<span>× lineage: ' + esc(r.parent) + ' already trades</span><span>' + r.lineage.toFixed(3) + '</span>' : '') +
-      '<span class="total">= implied value</span><span class="total">' + usd(check) + '</span></div>' +
+      '<h3>How the implied value is built (fitted terms)</h3><div class="wf">' +
+      '<span>Base: $66M TVL, flat week, just listed, other category</span><span>' + usd(Math.exp(P[0])) + '</span>' +
+      '<span>× size, TVL ' + usd(r.tvl_usd) + '</span><span>' + f(P[1]) + '</span>' +
+      '<span>× momentum, 7d TVL ' + (r.change_7d === null ? 'n/a' : (r.change_7d >= 0 ? '+' : '') + r.change_7d.toFixed(1) + '%') + '</span><span>' + f(P[2]) + '</span>' +
+      '<span>× time listed, ' + age(r.age_days) + ' with no token</span><span>' + f(P[3]) + '</span>' +
+      '<span>× category family (' + esc(M.family(r.category)) + ')</span><span>' + f(fam) + '</span>' +
+      (r.parent ? '<span>× lineage: ' + esc(r.parent) + ' already trades</span><span>×' + r.lineage.toFixed(3) + '</span>' : '') +
+      '<span class="total">= implied value</span><span class="total">' + usd(check) + '</span>' +
+      '<span>80% range from held-out errors</span><span>' + usd(r.implied_low_usd) + '–' + usd(r.implied_high_usd) + '</span></div>' +
       (peers.length ? '<h3>Traded peers in ' + esc(r.category) + '</h3><table class="peers">' + peers.map(function (p) { return '<tr><td>' + esc(p.name) + '</td><td class="num">' + usd(p.mcap_usd) + '</td><td class="num">' + p.ratio.toFixed(2) + 'x</td></tr>'; }).join('') + '</table>' : '') +
       '<h3>Farm plan — cost and time per step</h3><ol class="steps">' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>';
   }

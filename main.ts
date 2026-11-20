@@ -34,7 +34,7 @@ const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 const snapshot = JSON.parse(readFileSync(inputFile, 'utf8'));
 if (!Array.isArray(snapshot.protocols) || !Array.isArray(snapshot.watchlist)) fail('snapshot has no protocols or watchlist');
 
-const { board, live, peers } = model.buildBoard(snapshot);
+const { board, live, peers, model: fitted } = model.buildBoard(snapshot);
 
 // The gate's own shape, checked before anything is written.
 const slugs = new Set(snapshot.protocols.map((p: { slug: string }) => p.slug));
@@ -52,7 +52,7 @@ const missing = snapshot.watchlist.filter((s: string) => !onBoard.has(s));
 if (missing.length) fail(`watchlist not covered: ${missing.join(', ')}`);
 
 mkdirSync(out, { recursive: true });
-writeFileSync(join(out, 'board.json'), `${JSON.stringify({ as_of: snapshot.as_of, model: 'peer-multiple x momentum x runway', rows: board })}\n`);
+writeFileSync(join(out, 'board.json'), `${JSON.stringify({ as_of: snapshot.as_of, model: { kind: 'ridge on ln(market cap) of traded peers', ...fitted }, rows: board })}\n`);
 
 const categories = Object.entries(peers.cat as Record<string, { log: number; n: number }>)
   .map(([category, c]) => ({ category, n: c.n, multiple: +Math.exp(c.log).toFixed(4) }))
@@ -60,7 +60,7 @@ const categories = Object.entries(peers.cat as Record<string, { log: number; n: 
 const data = {
   as_of: snapshot.as_of, source: snapshot.source, floor_usd: snapshot.floor_usd,
   protocols: snapshot.protocols.length, watchlist: snapshot.watchlist.length,
-  traded: peers.peers, categories, rows: board, live,
+  traded: peers.peers, categories, model: fitted, rows: board, live,
 };
 writeFileSync(join(out, 'data.js'), `window.RADAR = ${JSON.stringify(data)};\n`);
 

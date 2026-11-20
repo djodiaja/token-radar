@@ -18,6 +18,8 @@ h1 { font-size: 26px; line-height: 1.2; margin: 0 0 8px; }
 .kpis div { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
 .kpis dt { color: var(--mute); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
 .kpis dd { margin: 2px 0 0; font: 600 20px var(--mono); }
+.kpis dd small { font: 500 11px var(--sans); color: var(--mute); }
+td.num .sub { font-family: var(--mono); font-size: 11px; }
 .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
 .tabs button { background: none; border: 0; color: var(--mute); padding: 8px 12px; font: 600 13px var(--sans); cursor: pointer; border-bottom: 2px solid transparent; }
 .tabs button.on { color: var(--ink); border-bottom-color: var(--accent); }
