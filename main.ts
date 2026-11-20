@@ -61,6 +61,8 @@ const data = {
   as_of: snapshot.as_of, source: snapshot.source, floor_usd: snapshot.floor_usd,
   protocols: snapshot.protocols.length, watchlist: snapshot.watchlist.length,
   traded: peers.peers, categories, model: fitted, rows: board, live,
+  // the raw snapshot, so the page can re-run dashboard/model.js and prove it reproduces board.json
+  snapshot: { as_of: snapshot.as_of, floor_usd: snapshot.floor_usd, watchlist: snapshot.watchlist, protocols: snapshot.protocols },
 };
 writeFileSync(join(out, 'data.js'), `window.RADAR = ${JSON.stringify(data)};\n`);
 

@@ -46,8 +46,33 @@
     $('chain').innerHTML = opts(chains, 'All chains');
   }
 
+  /** The evidence strip: recompute check, protocol accounting, ablation, range honesty, scatter. */
+  function evidence() {
+    var md = R.model, again = M.buildBoard(R.snapshot).board, same = 0;
+    again.forEach(function (r, i) { var o = R.rows[i]; if (o && o.slug === r.slug && o.implied_value_usd === r.implied_value_usd && o.rank === r.rank) same++; });
+    var acc = md.accounting, total = Object.keys(acc).reduce(function (s, k) { return s + acc[k]; }, 0);
+    var colors = ['#7aa2ff', '#f5b942', '#3fb984', '#56657a', '#8f6bd8', '#3a4656'];
+    var bar = Object.keys(acc).map(function (k, i) { return '<i style="flex:' + acc[k] + ';background:' + colors[i] + '"></i>'; }).join('');
+    var legend = Object.keys(acc).map(function (k, i) { return '<span><b style="background:' + colors[i] + '"></b>' + esc(k) + ' <em>' + acc[k] + '</em></span>'; }).join('');
+    var abl = md.ablation.map(function (a) {
+      return '<tr><td>' + esc(a.step) + '</td><td class="num">×' + a.loo_x.toFixed(2) + '</td><td class="num">×' + a.wf_x.toFixed(2) + '</td><td>' + (a.step === 'all terms' ? 'start' : a.kept ? '<span class="up">kept</span>' : '<span class="down">dropped</span>') + '</td></tr>';
+    }).join('');
+    $('evidence').innerHTML =
+      '<div class="ev-col"><h3>Every snapshot protocol, accounted for</h3><div class="acc">' + bar + '</div><div class="legend">' + legend + '</div>' +
+      '<p class="ok">✓ ' + same + ' / ' + R.rows.length + ' rows recomputed in this browser from the snapshot by model.js = board.json · ' + total + ' / ' + R.protocols + ' protocols in exactly one group</p></div>' +
+      '<div class="ev-col"><h3>Which terms earn their place (held-out miss)</h3><table class="abl"><tr><th>model</th><th class="num">leave-one-out</th><th class="num">older→newer</th><th></th></tr>' + abl + '</table>' +
+      '<p class="sub">A term is dropped only if leaving it out lowers the miss on both tests. Walk-forward fits the ' + md.wf_split[0] + ' earliest-listed tokens and prices the ' + md.wf_split[1] + ' newer ones.</p></div>' +
+      '<div class="ev-col"><h3>Is the printed range honest?</h3><p class="big">' + Math.round(md.wf_coverage * 100) + '%</p><p class="sub">of the newer tokens\' real market caps land inside the 80% range a fit on the older ones prints (target 80%). Typical miss ×' + md.wf_x.toFixed(2) + ' walk-forward, ×' + md.loo_median_x.toFixed(2) + ' leave-one-out; the old category-multiple rule misses by ×' + md.base_median_x.toFixed(2) + '.</p>' + scatter() + '</div>';
+  }
+  function scatter() {
+    var W = 300, H = 120, pts = [], lx = function (v) { return (Math.log10(v) - 6.5) / 4 * W; }, ly = function (v) { return H - (Math.log10(v) - 6) / 5 * H; };
+    R.snapshot.protocols.forEach(function (p) { if (p.mcap_usd > 0 && p.tvl_usd > 0) pts.push('<circle cx="' + lx(p.tvl_usd).toFixed(1) + '" cy="' + ly(p.mcap_usd).toFixed(1) + '" r="2" fill="#56657a"/>'); });
+    R.rows.forEach(function (r) { pts.push('<circle cx="' + lx(r.tvl_usd).toFixed(1) + '" cy="' + ly(r.implied_value_usd).toFixed(1) + '" r="2" fill="#f5b942"/>'); });
+    return '<svg class="sc" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="market cap against TVL">' + pts.join('') + '</svg><p class="sub">Grey: market cap vs TVL of tokens that trade. Gold: implied value of the ' + R.rows.length + ' ranked rows. Log scales, $3M–$30B TVL.</p>';
+  }
+
   var COLS = {
-    board: [['rank', '#', 'num'], ['name', 'Protocol', ''], ['tvl_usd', 'TVL', 'num'], ['change_7d', '7d', 'num'], ['age_days', 'No token for', 'num'], ['net_per_1k_usd', 'Net / $1k', 'num'], ['implied_value_usd', 'Implied value (80% range)', 'num']],
+    board: [['rank', '#', 'num'], ['name', 'Protocol', ''], ['tvl_usd', 'TVL', 'num'], ['change_7d', '7d', 'num'], ['age_days', 'No token for', 'num'], ['net_per_1k_usd', 'Verdict · net / $1k', 'num'], ['implied_value_usd', 'Implied value (80% range)', 'num']],
     peers: [['name', 'Protocol (token trades)', ''], ['category', 'Category', ''], ['tvl_usd', 'TVL', 'num'], ['mcap_usd', 'Market cap', 'num'], ['ratio', 'Mcap / TVL', 'num']]
   };
 
@@ -83,7 +108,7 @@
       return '<tr data-slug="' + esc(r.slug) + '"' + (r.slug === state.p ? ' class="sel"' : '') + '><td class="num">' + r.rank + '</td>' +
         '<td><span class="name">' + esc(r.name) + '</span>' + (r.watchlist ? '<span class="w">WATCH</span>' : '') + (r.parent ? '<span class="lin" title="' + esc(r.parent) + ' already trades">PARENT TRADES</span>' : '') + '<div class="sub">' + esc(r.category) + ' · ' + esc(r.chains.slice(0, 3).join(', ')) + (r.chains.length > 3 ? ' +' + (r.chains.length - 3) : '') + '</div></td>' +
         '<td class="num">' + usd(r.tvl_usd) + '</td><td class="num">' + pct(r.change_7d) + '</td><td class="num">' + age(r.age_days) + '</td>' +
-        '<td class="num ' + (r.net_per_1k_usd > 0 ? 'up' : 'down') + '">' + (r.net_per_1k_usd > 0 ? '+$' : '−$') + Math.abs(r.net_per_1k_usd) + '</td>' +
+        '<td class="num"><span class="vd ' + r.verdict.toLowerCase() + '">' + r.verdict + '</span> <span class="' + (r.net_per_1k_usd > 0 ? 'up' : 'down') + '">' + (r.net_per_1k_usd > 0 ? '+$' : '−$') + Math.abs(r.net_per_1k_usd) + '</span></td>' +
         '<td class="num"><div class="bar"><i style="width:' + Math.max(2, Math.round(70 * r.implied_value_usd / max)) + 'px"></i>' + usd(r.implied_value_usd) + '</div><div class="sub">' + usd(r.implied_low_usd) + '–' + usd(r.implied_high_usd) + '</div></td></tr>';
     }).join('') : '<tr><td colspan="7" class="empty">No protocol matches these filters.</td></tr>';
   }
@@ -109,7 +134,7 @@
       '<h3>How the implied value is built (fitted terms)</h3><div class="wf">' +
       '<span>Base: $66M TVL, flat week, just listed, other category</span><span>' + usd(Math.exp(P[0])) + '</span>' +
       '<span>× size, TVL ' + usd(r.tvl_usd) + '</span><span>' + f(P[1]) + '</span>' +
-      '<span>× momentum, 7d TVL ' + (r.change_7d === null ? 'n/a' : (r.change_7d >= 0 ? '+' : '') + r.change_7d.toFixed(1) + '%') + '</span><span>' + f(P[2]) + '</span>' +
+      (P[2] ? '<span>× momentum, 7d TVL ' + (r.change_7d === null ? 'n/a' : (r.change_7d >= 0 ? '+' : '') + r.change_7d.toFixed(1) + '%') + '</span><span>' + f(P[2]) + '</span>' : '<span>momentum (7d TVL change)</span><span class="sub">dropped by test</span>') +
       '<span>× time listed, ' + age(r.age_days) + ' with no token</span><span>' + f(P[3]) + '</span>' +
       '<span>× category family (' + esc(M.family(r.category)) + ')</span><span>' + f(fam) + '</span>' +
       (r.parent ? '<span>× lineage: ' + esc(r.parent) + ' already trades</span><span>×' + r.lineage.toFixed(3) + '</span>' : '') +
@@ -127,7 +152,7 @@
     table(); detail(); writeHash();
   }
 
-  header(); readHash(); render();
+  header(); evidence(); readHash(); render();
   $('tabs').addEventListener('click', function (e) { var t = e.target.dataset.tab; if (t) { state.tab = t; state.sort = 'rank'; state.dir = 1; render(); } });
   ['q', 'cat', 'chain', 'trend'].forEach(function (id) { $(id).addEventListener('input', function () { state[id] = this.value; render(); }); });
   $('watch').addEventListener('change', function () { state.watch = this.checked; render(); });

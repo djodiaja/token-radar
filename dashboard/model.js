@@ -111,25 +111,53 @@
     }
     return M.map(function (r, i) { return r[n] / r[i]; });
   }
+  /** Ridge fit on the columns `cols` of X; returns coefficients (zero outside cols) and LOO residuals. */
+  function ridge(X, y, cols) {
+    var k = cols.length, A = [], b = [];
+    for (var i = 0; i < k; i++) {
+      A.push([]); b.push(0);
+      for (var j = 0; j < k; j++) { var s = 0; for (var r = 0; r < X.length; r++) s += X[r][cols[i]] * X[r][cols[j]]; A[i].push(s + (i === j && cols[i] > 0 ? LAMBDA : 0)); }
+      for (r = 0; r < X.length; r++) b[i] += X[r][cols[i]] * y[r];
+    }
+    var bc = solve(A, b), inv = cols.map(function (_, c) { return solve(A, cols.map(function (_, i) { return i === c ? 1 : 0; })); });
+    var beta = TERMS.map(function () { return 0; }); cols.forEach(function (c, i) { beta[c] = bc[i]; });
+    var loo = X.map(function (x, r) {
+      var h = 0; for (var i = 0; i < k; i++) for (var j = 0; j < k; j++) h += x[cols[i]] * inv[i][j] * x[cols[j]];
+      return (y[r] - dot(x, beta)) / (1 - h);
+    });
+    return { beta: beta, loo: loo };
+  }
+  function dot(x, b) { return x.reduce(function (s, v, i) { return s + v * b[i]; }, 0); }
+  var STEPS = [['flat (intercept only)', [0]], ['+ size curve, ln TVL', [1]], ['+ category family', [4, 5, 6, 7, 8, 9]], ['+ 7-day TVL change', [2]], ['+ years listed', [3]]];
+
+  /** Walk-forward: fit on tokens listed before the median listing date, predict the newer ones. */
+  function walkForward(rows, X, y, cols) {
+    var dates = rows.map(function (p) { return p.listed_at || '0000'; }), cut = dates.slice().sort()[dates.length >> 1];
+    var old = [], neu = [];
+    rows.forEach(function (p, i) { (dates[i] < cut ? old : neu).push(i); });
+    var f = ridge(old.map(function (i) { return X[i]; }), old.map(function (i) { return y[i]; }), cols);
+    var srt = f.loo.slice().sort(function (a, c) { return a - c; }), lo = srt[Math.floor(.1 * srt.length)], hi = srt[Math.floor(.9 * srt.length)];
+    var errs = neu.map(function (i) { return y[i] - dot(X[i], f.beta); });
+    return { median_x: Math.exp(median(errs.map(Math.abs))), coverage: errs.filter(function (e) { return e >= lo && e <= hi; }).length / errs.length, n_old: old.length, n_new: neu.length };
+  }
+
   function fitModel(protocols, asOf) {
     var ages = protocols.map(function (p) { return ageDays(asOf, p.listed_at); }).filter(function (a) { return a !== null; });
     var medAge = median(ages) || 365;
     var train = protocols.filter(function (p) { return trades(p) && Math.abs(Math.log(p.mcap_usd / p.tvl_usd)) < RATIO_TRIM; });
     var X = train.map(function (p) { return features(p, asOf, medAge); });
     var y = train.map(function (p) { return Math.log(p.mcap_usd); });
-    var k = TERMS.length, A = [], b = [];
-    for (var i = 0; i < k; i++) {
-      A.push([]); b.push(0);
-      for (var j = 0; j < k; j++) { var s = 0; for (var r = 0; r < X.length; r++) s += X[r][i] * X[r][j]; A[i].push(s + (i === j && i > 0 ? LAMBDA : 0)); }
-      for (r = 0; r < X.length; r++) b[i] += X[r][i] * y[r];
-    }
-    var beta = solve(A, b);
-    var inv = TERMS.map(function (_, c) { return solve(A, TERMS.map(function (_, i) { return i === c ? 1 : 0; })); });
-    var loo = X.map(function (x, r) {
-      var h = 0; for (var i = 0; i < k; i++) for (var j = 0; j < k; j++) h += x[i] * inv[i][j] * x[j];
-      var pred = x.reduce(function (s, v, i) { return s + v * beta[i]; }, 0);
-      return (y[r] - pred) / (1 - h);
+    // backward elimination: start from every term, drop a group only if leaving it out lowers the
+    // miss on BOTH held-out tests (leave-one-out and walk-forward older -> newer)
+    var score = function (c) { return { loo_x: Math.exp(median(ridge(X, y, c).loo.map(Math.abs))), wf_x: walkForward(train, X, y, c).median_x }; };
+    var cols = TERMS.map(function (_, i) { return i; }), cur = score(cols), ablation = [{ step: 'all terms', loo_x: cur.loo_x, wf_x: cur.wf_x, kept: true }];
+    STEPS.slice(1).forEach(function (st) {
+      var without = cols.filter(function (c) { return st[1].indexOf(c) < 0; }), s = score(without);
+      var drop = s.loo_x < cur.loo_x && s.wf_x < cur.wf_x;
+      ablation.push({ step: 'without ' + st[0].slice(2), loo_x: s.loo_x, wf_x: s.wf_x, kept: !drop });
+      if (drop) { cols = without; cur = s; }
     });
+    var fit = ridge(X, y, cols), beta = fit.beta, loo = fit.loo, wfFinal = walkForward(train, X, y, cols);
     // the v1 rule (category median multiple), scored the same way: each protocol left out of its own peers
     var base = train.map(function (p) {
       var others = protocols.filter(function (q) { return q !== p; });
@@ -142,7 +170,8 @@
       loo_median_x: Math.exp(median(abs(loo))), base_median_x: Math.exp(median(abs(base))),
       within2x: loo.filter(function (e) { return Math.abs(e) < Math.LN2; }).length / loo.length,
       base_within2x: base.filter(function (e) { return Math.abs(e) < Math.LN2; }).length / base.length,
-      band: [sorted[Math.floor(0.1 * sorted.length)], sorted[Math.floor(0.9 * sorted.length)]]
+      band: [sorted[Math.floor(0.1 * sorted.length)], sorted[Math.floor(0.9 * sorted.length)]],
+      ablation: ablation, kept: cols, wf_x: wfFinal.median_x, wf_coverage: wfFinal.coverage, wf_split: [wfFinal.n_old, wfFinal.n_new]
     };
   }
   function predict(p, asOf, fit) {
@@ -245,6 +274,23 @@
     return '$' + Math.round(n);
   }
 
+  /** Every snapshot protocol in exactly one group, so the page can show nothing was dropped silently. */
+  function accounting(snapshot, board) {
+    var on = {}, watch = {}, g = { 'Ranked: watchlist': 0, 'Ranked: radar picks': 0, 'Token trades (peers)': 0, 'Token recorded, no cap': 0, 'Set aside: bridge/staking/exchange/wrapper': 0, 'Pre-token, below the cut': 0 };
+    board.forEach(function (r) { on[r.slug] = 1; });
+    snapshot.watchlist.forEach(function (s) { watch[s] = 1; });
+    snapshot.protocols.forEach(function (p) {
+      var k = on[p.slug] ? (watch[p.slug] ? 'Ranked: watchlist' : 'Ranked: radar picks')
+        : trades(p) ? 'Token trades (peers)' : !isPreToken(p) ? 'Token recorded, no cap'
+        : (SKIP[p.category] || /\b(wrapped|staked|staking)\b/i.test(p.name)) ? 'Set aside: bridge/staking/exchange/wrapper' : 'Pre-token, below the cut';
+      g[k]++;
+    });
+    return g;
+  }
+  /** FARM when $1,000 nets at least $10 after the plan's fees, MARGINAL when it nets anything, else SKIP. */
+  var FARM_LINE = 10;
+  function verdict(net) { return net >= FARM_LINE ? 'FARM' : net > 0 ? 'MARGINAL' : 'SKIP'; }
+
   /** Watchlist first, then the strongest pre-token protocols below the floor; ranked by implied value. */
   function buildBoard(snapshot) {
     var peers = peerMultiples(snapshot.protocols), parents = parentIndex(snapshot.protocols), watch = {};
@@ -267,6 +313,7 @@
         multiple: +r.v.multiple.toFixed(4), parts: r.v.parts.map(function (x) { return +x.toFixed(4); }), age_days: r.v.age_days,
         lineage: r.v.lineage, parent: r.v.parent,
         net_per_1k_usd: netPer1k(r.v.implied, r.p.tvl_usd, gasCost(cheapest(r.p.chains)), AIRDROP_SHARE),
+        verdict: verdict(netPer1k(r.v.implied, r.p.tvl_usd, gasCost(cheapest(r.p.chains)), AIRDROP_SHARE)),
         farm_steps: farmPlan(r.p, r.v)
       };
     });
@@ -277,7 +324,10 @@
       terms: fit.terms, beta: fit.beta.map(function (b) { return +b.toFixed(4); }), n: fit.n, lambda: LAMBDA,
       loo_median_x: +fit.loo_median_x.toFixed(3), base_median_x: +fit.base_median_x.toFixed(3),
       within2x: +fit.within2x.toFixed(3), base_within2x: +fit.base_within2x.toFixed(3),
-      band: fit.band.map(function (b) { return +Math.exp(b).toFixed(3); }), airdrop_share: AIRDROP_SHARE
+      band: fit.band.map(function (b) { return +Math.exp(b).toFixed(3); }), airdrop_share: AIRDROP_SHARE,
+      ablation: fit.ablation.map(function (a) { return { step: a.step, loo_x: +a.loo_x.toFixed(2), wf_x: +a.wf_x.toFixed(2), kept: a.kept }; }),
+      wf_x: +fit.wf_x.toFixed(2), wf_coverage: +fit.wf_coverage.toFixed(3), wf_split: fit.wf_split,
+      accounting: accounting(snapshot, board)
     };
     return { board: board, live: live, peers: peers, model: model };
   }
