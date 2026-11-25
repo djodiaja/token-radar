@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pre-token Radar</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span class="dot"></span>Pre-token Radar</div>
+  <div class="meta" id="meta"></div>
+</header>
+<main>
+  <section class="hero">
+    <div class="lead">
+      <h1 id="headline">Protocols with no token on record, priced by what a launch would be worth</h1>
+      <p class="formula" id="formula"></p>
+      <ul class="checks" id="checks" aria-label="Self-check, run in this browser"></ul>
+    </div>
+    <div class="kpis" id="kpis"></div>
+  </section>
+  <section class="evidence">
+    <article class="card" id="card-value"></article>
+    <article class="card" id="card-odds"></article>
+    <article class="card" id="card-ledger"></article>
+  </section>
+  <section class="boardwrap" id="board">
+    <nav class="tabs">
+      <button class="tab on" data-tab="radar">Pre-token board</button>
+      <button class="tab" data-tab="peers">Traded anchors</button>
+    </nav>
+    <div class="filters" id="filters">
+      <label>Search<input id="q" type="search" placeholder="name, category, chain"></label>
+      <label>Category<select id="cat"></select></label>
+      <label>Chain<select id="chain"></select></label>
+      <label>Verdict<select id="verdict"><option value="">All</option><option>FARM</option><option>THIN</option><option>SKIP</option></select></label>
+      <label>Deposit<select id="dep"><option value="1000">$1,000</option><option value="10000" selected>$10,000</option><option value="100000">$100,000</option></select></label>
+      <label class="check"><input id="watch" type="checkbox">Watchlist only</label>
+      <span class="count" id="count"></span>
+    </div>
+    <div class="split">
+      <div class="tablewrap"><table id="table"></table></div>
+      <aside class="detail" id="detail"></aside>
+    </div>
+  </section>
+  <footer class="foot" id="foot"></footer>
+</main>
+<script src="../data.js"></script>
+<script src="model.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

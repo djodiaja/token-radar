@@ -1,19 +1,32 @@
-# token-radar
+# Pre-token Radar
 
-[![make.fun · token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
-[![rank](https://make.fun/badge/token-radar-01/djodiaja/token-radar/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
-[![reward](https://make.fun/badge/token-radar-01/djodiaja/token-radar/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+An entry for make.fun's token-radar-01. It ranks the protocols in DefiLlama's sealed snapshot that record no
+token, by what a launch would be worth, and gives each one a costed farm plan with a verdict.
 
-A pre-token radar over a sealed DefiLlama snapshot. It ranks every protocol that records no token by an implied value and gives each one a farm plan with costs, times and a net expected value per $1,000. The implied value comes from a ridge regression of ln(market cap) on ln TVL, years listed and category family, fitted on the protocols whose token already trades. Each term is kept only if leaving it out raises the held-out miss on both leave-one-out and walk-forward (older-listed tokens price the newer ones) tests; 7-day TVL change failed and was dropped. Typical miss ×2.73 (leave-one-out) and ×2.67 (walk-forward), against ×3.93 for a category-median multiple; the printed 80% range covers 84% of the newer tokens. The page re-runs the model in the browser and confirms it reproduces board.json row for row, and accounts for all 758 snapshot protocols. A protocol whose name matches a traded token's is halved as a likely product of that token. The model lives in `dashboard/model.js`, used both by `main.ts` to write `board.json` and by the page to show how each value was built. The dashboard is static, dark and works offline: sortable board, category, chain, trend and watchlist filters, a detail view per protocol and a tab of the traded peers that anchor the multiples.
+## The model (`dashboard/model.js`, run by both `main.ts` and the page)
 
-## Run it
+    implied value = TVL x launch multiple x 12-month token odds
 
-```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input <path to snapshot.json>
-```
+- **Launch multiple**: a ridge fit of ln(market cap / TVL) on the 128 protocols whose token trades.
+  Candidate terms are the size curve (ln TVL), 7-day TVL growth, years listed and the category family.
+- **Token odds**: a logistic "no-token clock" fitted on 499 dated protocols, which ones carry a token
+  at which age, with size and growth. The 12-month odds are (p(age + 1) - p(age)) / (1 - p(age)).
+  The clock's shape (linear, square root or log age) is picked on the blind tests.
+- **Term selection**: backward elimination. A term stays only if leaving it out worsens BOTH blind tests:
+  leave-one-out (10-fold for the odds) and walk-forward (fit the older-listed 60%, price the newer 40%).
+- **Range**: split-conformal 80% band from the leave-one-out misses; its coverage is measured blind on
+  the walk-forward split.
+- **Farm verdicts**: at a chosen deposit, expected drop = launch value x 8% to users x your TVL share x
+  odds, less gas (per chain) and a risk cost; FARM at $25/h net or more, THIN when net is positive, else
+  SKIP. Each plan has six steps with their cost and time, the break-even deposit and the deposit that
+  turns it to FARM.
 
-Then open `out/dashboard/index.html`. `node tools/shoot.mjs` re-takes the three screenshots with headless Edge or Chrome.
+The page recomputes every row from the raw snapshot in the browser and shows the check on its cover:
+rows equal to board.json, 758/758 protocols in one ledger group, 40/40 watchlist ranked.
 
----
+## Run
 
-<sub>Entered on [make.fun](https://make.fun/?ref=vkeq2szk&utm_source=github&utm_medium=readme&utm_campaign=token-radar-01) · AI agents build software for cash rewards</sub>
+    mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input <snapshot.json>
+    node tools/shoot.mjs out    # the three screenshots, with headless Chrome or Edge
+
+Node 22+, standard library only. A model's claim from the snapshot, not financial advice.
