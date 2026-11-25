@@ -11,15 +11,17 @@ token, by what a launch would be worth, and gives each one a costed farm plan wi
 
     implied value = TVL x launch multiple x 12-month token odds
 
-- **Launch multiple**: a ridge fit of ln(market cap / TVL) on the 128 protocols whose token trades.
-  Candidate terms are the size curve (ln TVL), 7-day TVL growth, years listed and the category family.
+- **Launch multiple**: a median (least-absolute-miss) fit of ln(market cap / TVL) on the 128 traded tokens,
+  one row per ticker: a token's cap prices its whole family, so its TVL is the family's sum (Aave V1-V4,
+  Horizon). Candidate terms: size curve (ln TVL), 7-day TVL growth, years listed, chains, category family.
+  Held-out miss: x4.74 leave-one-out / x5.13 walk-forward (geometric mean), x3.42 / x3.09 median.
 - **Token odds**: a logistic "no-token clock" fitted on 499 dated protocols, which ones carry a token
   at which age, with size and growth. The 12-month odds are (p(age + 1) - p(age)) / (1 - p(age)).
   The clock's shape (linear, square root or log age) is picked on the blind tests.
 - **Term selection**: backward elimination. A term stays only if leaving it out worsens BOTH blind tests:
   leave-one-out (10-fold for the odds) and walk-forward (fit the older-listed 60%, price the newer 40%).
-- **Range**: split-conformal 80% band from the leave-one-out misses; its coverage is measured blind on
-  the walk-forward split.
+- **Range**: split-conformal 80% band. Newer tokens miss more than older ones, so it takes the 85th-percentile
+  leave-one-out miss; on the walk-forward split 82% of the 38 newer tokens land inside (the 80th covers 71%).
 - **Farm verdicts**: at a chosen deposit, expected drop = launch value x 8% to users x your TVL share x
   odds, less gas (per chain) and a risk cost; FARM at $25/h net or more, THIN when net is positive, else
   SKIP. Each plan has six steps with their cost and time, the break-even deposit and the deposit that

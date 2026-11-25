@@ -27,31 +27,32 @@
     [plans === n, `${plans}/${n} farm plans costed and timed`],
     [v.final[0] < v.flat[0] && v.final[1] < v.flat[1], `multiple beats a flat multiple on both blind tests`],
     [o.final[0] < o.flat[0] && o.final[1] < o.flat[1], `token odds beat the base rate on both blind tests`],
+    [v.cover >= R.P.target, `80% range holds ${pct(v.cover)} of ${v.nTest} newer tokens (walk-forward split)`],
   ];
   $('checks').innerHTML = checks.map(([ok, t]) => `<li class="${ok ? 'ok' : 'bad'}"><b>${ok ? '✓' : '✗'}</b>${esc(t)}</li>`).join('');
 
   $('meta').textContent = `snapshot ${res.asOf} · ${res.total} protocols · watchlist floor ${usd(res.floor)} · DefiLlama, sealed`;
   $('headline').textContent = `${n} protocols with no token on record, ranked by what a launch would be worth to you`;
-  $('formula').innerHTML = `<b>implied value = TVL × launch multiple × 12-month token odds</b>. The multiple is fitted on the ${v.nPeers} protocols whose token trades; the odds on the record of ${o.n} protocols: which ones carry a token at which no-token age. Every term stays only if leaving it out worsens <i>both</i> blind tests. A model's claim from the snapshot, not a forecast.`;
+  $('formula').innerHTML = `<b>implied value = TVL × launch multiple × 12-month token odds</b>. The multiple is a median fit on the ${v.nPeers} protocols whose token trades, one row per ticker with the family's TVL summed; the odds on the record of ${o.n} protocols: which ones carry a token at which no-token age. Every term stays only if leaving it out worsens <i>both</i> blind tests. A model's claim from the snapshot, not a forecast.`;
 
   const ranked = rows.reduce((s, r) => s + r.value, 0);
   const farmN = rows.filter((r) => r.plan.verdict === 'FARM').length;
   const kpi = (k, val, sub) => `<div class="kpi"><span>${k}</span><b>${val}</b><em>${sub}</em></div>`;
   $('kpis').innerHTML = [
     kpi('Watchlist covered', `${watchRanked} / ${res.watchTotal}`, `+${n - watchRanked} below the floor`),
-    kpi('Multiple, blind miss', x2(v.final[0]), `walk-forward ${x2(v.final[1])} · flat ${x2(v.flat[0])}`),
-    kpi('80% range, blind', pct(v.cover), `of ${v.nTest} newer tokens inside`),
+    kpi('Multiple, median blind miss', `${x2(v.median.wf)}`, `walk-forward · leave-one-out ${x2(v.median.loo)}`),
+    kpi('Multiple, mean blind miss', x2(v.final[1]), `walk-forward · leave-one-out ${x2(v.final[0])} · flat ${x2(v.flat[1])}`),
+    kpi('80% range, newer tokens', pct(v.cover), `of ${v.nTest} newer tokens inside`),
     kpi('Odds log loss', o.final[1].toFixed(3), `walk-forward · base rate ${o.flat[1].toFixed(3)}`),
-    kpi('Sum of implied value', usd(ranked), `${n} rows, odds-weighted`),
-    kpi('FARM at $10k', `${farmN}`, `net ≥ $${R.P.farmRate}/h after gas + risk`),
+    kpi('FARM at $10k', `${farmN}`, `net ≥ $${R.P.farmRate}/h after gas + risk · ${usd(ranked)} implied in all`),
   ].join('');
 
   // ---- evidence cards ----
-  const termName = { size: 'Size curve, ln TVL', growth: '7-day TVL growth', age: 'Years listed', family: 'Category family', clock: `No-token clock (${o.shape} age)` };
+  const termName = { size: 'Size curve, ln TVL', growth: '7-day TVL growth', age: 'Years listed', chains: 'Chains deployed (log)', family: 'Category family', clock: `No-token clock (${o.shape} age)` };
   const tbl = (t, fmt, heads) => `<table class="mini"><tr><th>Term</th><th>${heads[0]}<small>with / without</small></th><th>${heads[1]}<small>with / without</small></th><th></th></tr>${t.map((r) => `<tr><td>${termName[r.term]}</td><td>${fmt(r.with[0])} / ${fmt(r.without[0])}</td><td>${fmt(r.with[1])} / ${fmt(r.without[1])}</td><td class="${r.kept ? 'kept' : 'drop'}">${r.kept ? 'kept' : 'dropped'}</td></tr>`).join('')}</table>`;
   $('card-value').innerHTML = `<h2>Launch multiple: terms that survive two blind tests</h2>
     ${tbl(v.table, x2, ['Leave-one-out', 'Walk-forward'])}
-    <p class="note">Miss = typical factor between fitted and real market cap on peers the fit never saw. Leave-one-out refits ${v.nPeers} times; walk-forward fits the older-listed 60% and prices the ${v.nTest} listed from ${v.cutDate}. Flat multiple: ${x2(v.flat[0])} / ${x2(v.flat[1])}. Kept: ${v.kept.join(', ') || 'none'}.</p>
+    <p class="note">Fit: median regression (least absolute miss), since the misses are heavy-tailed. Families: ${v.merged.length} traded tokens priced against their family's TVL (${v.merged.slice(0, 3).map((m) => `${esc(m.name)} ${usd(m.own)}→${usd(m.fam)}`).join(', ')}). Miss = geometric-mean factor between fitted and real market cap on peers the fit never saw. Leave-one-out refits ${v.nPeers} times; walk-forward fits the older-listed 60% and prices the ${v.nTest} listed from ${v.cutDate}. Flat multiple: ${x2(v.flat[0])} / ${x2(v.flat[1])}. Kept: ${v.kept.join(', ') || 'none'}.</p>
     ${scatter()}`;
   $('card-odds').innerHTML = `<h2>Token odds: the no-token clock</h2>
     ${tbl(o.table, (x) => x.toFixed(3), ['10-fold log loss', 'Walk-forward'])}
@@ -63,15 +64,16 @@
     <div class="stack">${G.map(([k, , c]) => `<i style="flex:${res.groups[k] || 0};background:var(${c})"></i>`).join('')}</div>
     <ul class="legend">${G.map(([k, t, c]) => `<li><i style="background:var(${c})"></i>${t}<b>${res.groups[k] || 0}</b></li>`).join('')}<li class="sum">Total<b>${ledger} / ${res.total}</b></li></ul>
     <h3>Is the printed range honest?</h3>
-    <p class="big">${pct(v.cover)} <small>of ${v.nTest} newer tokens land inside the 80% range a fit on the older ones printed (split-conformal, ±${x2(Math.exp(v.q))} on the full fit). ${pct(v.within2)} of peers land within 2× leave-one-out.</small></p>`;
+    <p class="big">${pct(v.cover)} <small>of ${v.nTest} newer tokens land inside the 80% range a fit on the older ones printed (split-conformal, ×÷${Math.exp(v.q).toFixed(1)} on the full fit). Newer tokens miss more than older ones, so the 80% band takes the ${Math.round(v.bandLevel * 100)}th-percentile miss; the level is read off this table, so this split checks it rather than tests it blind. ${pct(v.within2)} of peers land within 2× leave-one-out.</small></p>
+    <table class="mini"><tr><th>Miss quantile used</th>${v.coverCurve.map((c) => `<th>${Math.round(c.l * 100)}th</th>`).join('')}</tr><tr><td>Newer tokens inside</td>${v.coverCurve.map((c) => `<td class="${c.l === v.bandLevel ? 'kept' : ''}">${pct(c.c)}</td>`).join('')}</tr></table>`;
 
   function scatter() {
-    const P = res.peers, W = 300, H = 120, lx = (t) => Math.log10(t), xs = P.map((p) => lx(p.tvl)), ys = P.map((p) => lx(p.mcap));
+    const P = res.peers, W = 300, H = 120, lx = (t) => Math.log10(t), xs = P.map((p) => lx(p.famTvl)), ys = P.map((p) => lx(p.mcap));
     const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
     const sx = (x) => 6 + ((x - x0) / (x1 - x0)) * (W - 12), sy = (y) => H - 6 - ((y - y0) / (y1 - y0)) * (H - 12);
     const dots = P.map((p, i) => `<circle cx="${sx(xs[i]).toFixed(1)}" cy="${sy(ys[i]).toFixed(1)}" r="2" class="pd"/>`).join('');
-    const fit = P.map((p, i) => [sx(xs[i]), sy(lx(p.tvl * p.fit))]).sort((a, b) => a[0] - b[0]);
-    return `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Market cap against TVL for traded peers">${dots}<polyline points="${fit.map((q) => q.map((z) => z.toFixed(1)).join(',')).join(' ')}" class="fl"/></svg><p class="cap">Traded peers: market cap vs TVL (log). Line: fitted launch value.</p>`;
+    const fit = P.map((p, i) => [sx(xs[i]), sy(lx(p.famTvl * p.fit))]).sort((a, b) => a[0] - b[0]);
+    return `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Market cap against TVL for traded peers">${dots}<polyline points="${fit.map((q) => q.map((z) => z.toFixed(1)).join(',')).join(' ')}" class="fl"/></svg><p class="cap">Traded tokens: market cap vs family TVL (log). Line: fitted launch value.</p>`;
   }
   function curve() {
     const C = o.curve, W = 300, H = 110, top = Math.max(...C.map((c) => c.h)) * 1.15;
@@ -125,7 +127,7 @@
   function renderPeers() {
     const P = [...res.peers].sort((a, b) => b.mcap - a.mcap);
     $('count').textContent = `${P.length} protocols whose token trades: the anchors of the multiple`;
-    $('table').innerHTML = `<thead><tr><th>Protocol</th><th>TVL</th><th>Market cap</th><th>Real multiple</th><th>Fitted</th><th>Miss</th></tr></thead><tbody>${P.map((p) => `<tr><td><b>${esc(p.name)}</b></td><td class="num">${usd(p.tvl)}</td><td class="num">${usd(p.mcap)}</td><td class="num">${x2(p.mult)}</td><td class="num">${x2(p.fit)}</td><td class="num">${x2(Math.exp(Math.abs(Math.log(p.mult / p.fit))))}</td></tr>`).join('')}</tbody>`;
+    $('table').innerHTML = `<thead><tr><th>Protocol</th><th>Family TVL</th><th>Market cap</th><th>Real multiple</th><th>Fitted</th><th>Miss</th></tr></thead><tbody>${P.map((p) => `<tr><td><b>${esc(p.name)}</b></td><td class="num">${usd(p.famTvl)}</td><td class="num">${usd(p.mcap)}</td><td class="num">${x2(p.mult)}</td><td class="num">${x2(p.fit)}</td><td class="num">${x2(Math.exp(Math.abs(Math.log(p.mult / p.fit))))}</td></tr>`).join('')}</tbody>`;
     $('detail').innerHTML = `<h2>Why anchors</h2><p class="note">A token that trades gives a market cap for its TVL. These ${P.length} are the only rows the multiple is fitted on; none of them is ranked on the board, which holds protocols with no token on record.</p>`;
   }
 

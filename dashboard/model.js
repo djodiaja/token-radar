@@ -2,7 +2,7 @@
    page calls run() again in the browser on the raw snapshot, then compares every row with board.json.
 
    implied value = TVL x launch multiple x 12-month token odds
-     launch multiple: ridge fit of ln(market cap / TVL) on the protocols whose token trades
+     launch multiple: median fit of ln(market cap / family TVL) on the traded tokens, one row per ticker
      token odds:      logistic "no-token clock" fitted on which protocols carry a token at which age
    Every term is kept only when BOTH blind tests keep it: leaving it out must worsen the held-out miss
    on leave-one-out (10-fold for the odds) AND on walk-forward (fit on the older-listed, price the newer). */
@@ -10,7 +10,8 @@
   'use strict';
 
   const P = {
-    ridge: 2, oddsRidge: 1, wfShare: 0.6, target: 0.8, folds: 10,
+    ladRidge: 1, ladSteps: 25, oddsRidge: 1, wfShare: 0.6, target: 0.8, folds: 10,
+    bandLevel: 0.85,   // the 80% band takes the 85th-percentile leave-one-out miss: newer tokens miss more (drift)
     userShare: 0.08,   // share of a launch's supply that goes to users who supplied TVL (assumption)
     riskYear: 0.003,   // expected loss a year on a deposit (exploit base rate); doubled below the floor
     monitorMin: 120,   // 12 monthly checks of 10 minutes
@@ -35,6 +36,9 @@
   const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
   const sigmoid = (z) => 1 / (1 + Math.exp(-z));
   const dot = (a, b) => a.reduce((s, x, i) => s + x * b[i], 0);
+
+  /** One key per token: the ticker, else the CoinGecko id. Protocols sharing it are one family. */
+  const ticker = (p) => (p.symbol || p.gecko_id || '').toUpperCase() || null;
 
   function family(cat) {
     for (const [f, re] of FAMILIES) if (cat && re.test(cat)) return f;
@@ -77,11 +81,17 @@
     return { A, b };
   }
 
-  /** Ridge regression on standardised terms; the intercept is not penalised. */
-  function fitLinear(train, cols) {
-    const row = scaler(train, cols), X = train.map(row);
-    const { A, b } = normal(X, train.map(() => 1), train.map((r) => r.y), P.ridge);
-    const beta = solve(A, b);
+  /** Median (least-absolute-miss) regression by reweighting: the multiple's misses are heavy-tailed
+      (bridges near x0.001, tiny tokens above x100), so a squared-miss fit chases the tails. */
+  function fitMedian(train, cols) {
+    const row = scaler(train, cols), X = train.map(row), ys = train.map((r) => r.y);
+    let beta = new Array(X[0].length).fill(0);
+    beta[0] = [...ys].sort((a, b) => a - b)[ys.length >> 1];
+    for (let it = 0; it < P.ladSteps; it++) {
+      const w = X.map((x, n) => 1 / Math.max(Math.abs(ys[n] - dot(beta, x)), 0.01));
+      const { A, b } = normal(X, w, ys, P.ladRidge);
+      beta = solve(A, b);
+    }
     return { beta, cols, predict: (r) => dot(beta, row(r)) };
   }
 
@@ -115,7 +125,7 @@
 
   /** Held-out scores of one term set: [first test, walk-forward]. */
   function heldOut(kind, rows, cols) {
-    const fit = kind === 'value' ? fitLinear : fitLogit, loss = kind === 'value' ? absMiss : logLoss;
+    const fit = kind === 'value' ? fitMedian : fitLogit, loss = kind === 'value' ? absMiss : logLoss;
     let first = 0;
     if (kind === 'value') {
       rows.forEach((r, i) => { first += loss(fit(rows.filter((_, j) => j !== i), cols), r); });
@@ -190,7 +200,7 @@
   function features(p, asOf, ageFill) {
     const age = p.listed_at ? Math.max((asOf - Date.parse(p.listed_at)) / YEAR, 0.05) : ageFill;
     const fam = family(p.category);
-    const f = atAge({ size: Math.log(p.tvl_usd), growth: clamp(p.change_7d ?? 0, -30, 30) / 100 }, age);
+    const f = atAge({ size: Math.log(p.tvl_usd), growth: clamp(p.change_7d ?? 0, -30, 30) / 100, chains: Math.log((p.chains || []).length || 1) }, age);
     for (const [name] of FAMILIES) f['f_' + name] = fam === name ? 1 : 0;
     return { f, fam };
   }
@@ -247,20 +257,28 @@
     const ageFill = ages[Math.floor(ages.length / 2)];
     for (const x of all) Object.assign(x, features(x.p, asOf, ageFill));
 
-    // 1. Launch multiple, fitted on the traded peers.
-    const peers = all.filter((x) => x.group === 'traded')
-      .map((x) => ({ slug: x.p.slug, listed: x.p.listed_at, f: x.f, y: Math.log(x.p.mcap_usd / x.p.tvl_usd), x }));
+    // 1. Launch multiple, fitted on the traded peers, one row per ticker. A token's market cap prices
+    //    its whole family (Aave's cap covers V1-V4 and Horizon), so the peer's TVL is the family's sum.
+    const famTvl = {};
+    for (const x of all) { const k = ticker(x.p); if (k) famTvl[k] = (famTvl[k] || 0) + x.p.tvl_usd; }
+    const peers = all.filter((x) => x.group === 'traded').map((x) => {
+      const T = famTvl[ticker(x.p)] || x.p.tvl_usd;
+      return { slug: x.p.slug, listed: x.p.listed_at, f: { ...x.f, size: Math.log(T) }, y: Math.log(x.p.mcap_usd / T), famTvl: T, x };
+    });
+    const merged = peers.filter((r) => r.famTvl > r.x.p.tvl_usd * 1.01).map((r) => ({ name: r.x.p.name, own: r.x.p.tvl_usd, fam: r.famTvl }));
     const famCols = FAMILIES.map(([n]) => 'f_' + n);
-    const vSel = select('value', peers, { size: ['size'], growth: ['growth'], age: ['age'], family: famCols }, []);
+    const vSel = select('value', peers, { size: ['size'], growth: ['growth'], age: ['age'], chains: ['chains'], family: famCols }, []);
     const flat = heldOut('value', peers, []);
-    const vFit = fitLinear(peers, vSel.cols);
-    const loo = peers.map((r, i) => Math.abs(fitLinear(peers.filter((_, j) => j !== i), vSel.cols).predict(r) - r.y)).sort((a, b) => a - b);
-    const q = quantile(loo, P.target);
-    const wf = wfSplit(peers), wfFit = fitLinear(wf.train, vSel.cols);
-    const wfLoo = wf.train.map((r, i) => Math.abs(fitLinear(wf.train.filter((_, j) => j !== i), vSel.cols).predict(r) - r.y)).sort((a, b) => a - b);
-    const qOld = quantile(wfLoo, P.target);
-    const inside = wf.test.filter((r) => Math.abs(wfFit.predict(r) - r.y) <= qOld).length;
+    const vFit = fitMedian(peers, vSel.cols);
+    const loo = peers.map((r, i) => Math.abs(fitMedian(peers.filter((_, j) => j !== i), vSel.cols).predict(r) - r.y)).sort((a, b) => a - b);
+    const q = quantile(loo, P.bandLevel);
+    const wf = wfSplit(peers), wfFit = fitMedian(wf.train, vSel.cols);
+    const wfLoo = wf.train.map((r, i) => Math.abs(fitMedian(wf.train.filter((_, j) => j !== i), vSel.cols).predict(r) - r.y)).sort((a, b) => a - b);
+    const wfMiss = wf.test.map((r) => Math.abs(wfFit.predict(r) - r.y));
+    const coverAt = (lvl) => wfMiss.filter((e) => e <= quantile(wfLoo, lvl)).length / (wfMiss.length || 1);
+    const inside = wfMiss.filter((e) => e <= quantile(wfLoo, P.bandLevel)).length;
     const within2 = loo.filter((e) => e <= Math.log(2)).length;
+    const median = { loo: Math.exp(quantile(loo, 0.5)), wf: Math.exp(quantile([...wfMiss].sort((a, b) => a - b), 0.5)) };
 
     // 2. Token odds: which protocols carry a token at which no-token age, from the record of every
     //    protocol that is not set aside. The clock (no-token age) turns a share into 12-month odds:
@@ -299,12 +317,13 @@
     for (const x of all) groups[x.group] = (groups[x.group] || 0) + 1;
     return {
       asOf: s.as_of, floor: s.floor_usd, total: s.protocols.length, watchTotal: s.watchlist.length, groups, P,
-      value: { table: vSel.table, kept: vSel.active, final: vSel.final, flat, q, cover: inside / (wf.test.length || 1), nTest: wf.test.length,
+      value: { table: vSel.table, kept: vSel.active, final: vSel.final, flat, q, cover: inside / (wf.test.length || 1), nTest: wf.test.length, median, merged,
+        coverCurve: [0.7, 0.75, 0.8, 0.85, 0.9].map((l) => ({ l, c: coverAt(l) })), bandLevel: P.bandLevel, nTickers: new Set(peers.map((r) => ticker(r.x.p))).size,
         nPeers: peers.length, cutDate: wf.cutDate, within2: within2 / peers.length, beta: vFit.beta, cols: vFit.cols },
       odds: { table: oSel.table, kept: oSel.active, final: oSel.final, flat: oFlat, n: pool.length, base: mean(pool.map((r) => r.y)), useClock,
         shape, shapes, curve: [0.25, 0.5, 1, 1.5, 2, 3, 4, 5].map((a) => ({ a, h: odds12(atAge(typical, a)) })) },
       rows: ranked,
-      peers: peers.map((r) => ({ slug: r.slug, name: r.x.p.name, tvl: r.x.p.tvl_usd, mcap: r.x.p.mcap_usd, fit: Math.exp(vFit.predict(r)), mult: Math.exp(r.y) })),
+      peers: peers.map((r) => ({ slug: r.slug, name: r.x.p.name, tvl: r.x.p.tvl_usd, mcap: r.x.p.mcap_usd, fit: Math.exp(vFit.predict(r)), mult: Math.exp(r.y), famTvl: r.famTvl })),
     };
   }
 
